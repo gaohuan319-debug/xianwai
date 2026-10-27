@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="650" viewBox="0 0 680 650" role="img">
+<title>弦外完整架构</title>
+<desc>左侧为用户交互层，右侧为处理链路；青色虚线为新增待做功能，珊瑚色为发往云端的大模型</desc>
+<style>
+  text { font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; dominant-baseline: central; }
+  .th { font-size: 14px; font-weight: 500; fill: #2C2C2A; }
+  .ts { font-size: 12px; fill: #5F5E5A; }
+  .box { fill: #F8F7F4; stroke: #B4B2A9; stroke-width: 0.8; }
+  .panel { fill: none; stroke: #B4B2A9; stroke-width: 0.8; }
+  .new { fill: #E1F5EE; stroke: #0F6E56; stroke-width: 0.8; stroke-dasharray: 3 3; }
+  .new-t { fill: #085041; }
+  .cloud { fill: #FAECE7; stroke: #993C1D; stroke-width: 0.8; }
+  .cloud-t { fill: #712B13; }
+  .arr { stroke: #73726C; stroke-width: 1.5; fill: none; }
+</style>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#73726C" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect width="680" height="650" fill="#FFFFFF"/>
+
+<rect class="panel" x="40" y="40" width="220" height="106" rx="12"/>
+<text class="th" x="56" y="60">上传前</text>
+<rect class="box" x="52" y="76" width="196" height="26" rx="4"/>
+<text class="ts" x="150" y="89" text-anchor="middle">选择说话人数</text>
+<rect class="new" x="52" y="108" width="196" height="26" rx="4"/>
+<text class="ts new-t" x="150" y="121" text-anchor="middle">勾选要跑的功能</text>
+
+<rect class="panel" x="40" y="166" width="220" height="202" rx="12"/>
+<text class="th" x="56" y="186">规则管理</text>
+<rect class="new" x="52" y="202" width="196" height="26" rx="4"/>
+<rect class="new" x="52" y="234" width="196" height="26" rx="4"/>
+<rect class="new" x="52" y="266" width="196" height="26" rx="4"/>
+<rect class="new" x="52" y="298" width="196" height="26" rx="4"/>
+<rect class="new" x="52" y="330" width="196" height="26" rx="4"/>
+<text class="ts new-t" x="150" y="215" text-anchor="middle">1 用一句话描述规则</text>
+<text class="ts new-t" x="150" y="247" text-anchor="middle">2 大模型生成提示词</text>
+<text class="ts new-t" x="150" y="279" text-anchor="middle">3 查看并修改提示词</text>
+<text class="ts new-t" x="150" y="311" text-anchor="middle">4 选一条录音试跑</text>
+<text class="ts new-t" x="150" y="343" text-anchor="middle">5 保存、启用或停用</text>
+
+<rect class="panel" x="40" y="388" width="220" height="202" rx="12"/>
+<text class="th" x="56" y="408">结果页</text>
+<rect class="box" x="52" y="424" width="196" height="26" rx="4"/>
+<text class="ts" x="150" y="437" text-anchor="middle">给说话人命名</text>
+<rect class="box" x="52" y="456" width="196" height="26" rx="4"/>
+<text class="ts" x="150" y="469" text-anchor="middle">点结论回听原话</text>
+<rect class="box" x="52" y="488" width="196" height="26" rx="4"/>
+<text class="ts" x="150" y="501" text-anchor="middle">勾选或删除待办</text>
+<rect class="box" x="52" y="520" width="196" height="26" rx="4"/>
+<text class="ts" x="150" y="533" text-anchor="middle">标记洞察对错</text>
+<rect class="box" x="52" y="552" width="196" height="26" rx="4"/>
+<text class="ts" x="150" y="565" text-anchor="middle">重新转写或重新分析</text>
+
+<line class="arr" x1="260" y1="65" x2="318" y2="65" marker-end="url(#arrow)"/>
+<line class="arr" x1="260" y1="353" x2="318" y2="353" marker-end="url(#arrow)"/>
+<line class="arr" x1="262" y1="497" x2="318" y2="497" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+
+<rect class="box" x="320" y="40" width="320" height="50" rx="8"/>
+<text class="th" x="480" y="57" text-anchor="middle">上传接口</text>
+<text class="ts" x="480" y="75" text-anchor="middle">保存音频、说话人数、选中的功能</text>
+<line class="arr" x1="480" y1="90" x2="480" y2="110" marker-end="url(#arrow)"/>
+
+<rect class="box" x="320" y="112" width="320" height="50" rx="8"/>
+<text class="th" x="480" y="129" text-anchor="middle">ffmpeg 转码</text>
+<text class="ts" x="480" y="147" text-anchor="middle">统一为 16kHz 单声道 wav</text>
+<line class="arr" x1="480" y1="162" x2="480" y2="182" marker-end="url(#arrow)"/>
+
+<rect class="box" x="320" y="184" width="320" height="50" rx="8"/>
+<text class="th" x="480" y="201" text-anchor="middle">FunASR 本地识别</text>
+<text class="ts" x="480" y="219" text-anchor="middle">断句、转写、标点、说话人分离</text>
+<line class="arr" x1="480" y1="234" x2="480" y2="254" marker-end="url(#arrow)"/>
+
+<rect class="box" x="320" y="256" width="320" height="50" rx="8"/>
+<text class="th" x="480" y="273" text-anchor="middle">转写后处理</text>
+<text class="ts" x="480" y="291" text-anchor="middle">平滑说话人、合并碎句、重新标点</text>
+<line class="arr" x1="480" y1="306" x2="480" y2="326" marker-end="url(#arrow)"/>
+
+<rect class="new" x="320" y="328" width="320" height="50" rx="8"/>
+<text class="th new-t" x="480" y="345" text-anchor="middle">分析器（只跑选中的）</text>
+<text class="ts new-t" x="480" y="363" text-anchor="middle">内置 4 个 + 用户自定义规则</text>
+<line class="arr" x1="480" y1="378" x2="480" y2="398" marker-end="url(#arrow)"/>
+
+<rect class="cloud" x="320" y="400" width="320" height="50" rx="8"/>
+<text class="th cloud-t" x="480" y="417" text-anchor="middle">大模型</text>
+<text class="ts cloud-t" x="480" y="435" text-anchor="middle">输入转写文字，输出 JSON，失败重试</text>
+<line class="arr" x1="480" y1="450" x2="480" y2="470" marker-end="url(#arrow)"/>
+
+<rect class="box" x="320" y="472" width="320" height="50" rx="8"/>
+<text class="th" x="480" y="489" text-anchor="middle">SQLite 存储</text>
+<text class="ts" x="480" y="507" text-anchor="middle">转写、结论、证据、人物、反馈</text>
+
+<rect class="box" x="60" y="616" width="14" height="14" rx="3"/>
+<text class="ts" x="82" y="623">已实现</text>
+<rect class="new" x="160" y="616" width="14" height="14" rx="3"/>
+<text class="ts" x="182" y="623">v0.2 新增</text>
+<rect class="cloud" x="290" y="616" width="14" height="14" rx="3"/>
+<text class="ts" x="312" y="623">转写文字发往云端（用 Ollama 则留在本机）</text>
+</svg>

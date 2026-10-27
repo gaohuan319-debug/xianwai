@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS recordings (
     audio_path  TEXT,
     duration_ms INTEGER,
     num_speakers INTEGER,  -- 用户指定的说话人数，NULL 表示自动
+    analyzers   TEXT,      -- 要跑的分析器 id（JSON 数组），NULL 表示用默认启用的那些
     status      TEXT NOT NULL DEFAULT 'queued',  -- queued | transcribing | analyzing | done | error
     error       TEXT,
     created_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
@@ -74,9 +75,17 @@ CREATE TABLE IF NOT EXISTS todos (
     done         INTEGER NOT NULL DEFAULT 0,
     created_at   TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
+
+-- 用户在界面上对分析器的默认启用/停用设置，不改动 YAML 文件
+CREATE TABLE IF NOT EXISTS analyzer_settings (
+    analyzer_id TEXT PRIMARY KEY,
+    enabled     INTEGER NOT NULL
+);
 """
 
 _JSON_COLUMNS = {"evidence"}
+# 这些列的 NULL 有单独含义，不能当成空数组
+_NULLABLE_JSON_COLUMNS = {"analyzers"}
 
 
 def init_db() -> None:
@@ -88,6 +97,8 @@ def init_db() -> None:
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(recordings)")}
         if "num_speakers" not in cols:
             conn.execute("ALTER TABLE recordings ADD COLUMN num_speakers INTEGER")
+        if "analyzers" not in cols:
+            conn.execute("ALTER TABLE recordings ADD COLUMN analyzers TEXT")
 
 
 @contextmanager
@@ -109,6 +120,8 @@ def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
     d = dict(row)
     for col in _JSON_COLUMNS & d.keys():
         d[col] = json.loads(d[col] or "[]")
+    for col in _NULLABLE_JSON_COLUMNS & d.keys():
+        d[col] = None if d[col] is None else json.loads(d[col])
     return d
 
 

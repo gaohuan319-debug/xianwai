@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from pathlib import Path
@@ -8,10 +9,10 @@ from typing import Optional
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from . import __version__, audio, pipeline
-from .analyzers import load_analyzers
+from . import __version__, analyzers, audio, llm, pipeline, rules
+from .analyzers import KINDS, MAX_PROMPT_CHARS, Analyzer
 from .config import settings
 from .db import connect, init_db, row_to_dict, rows_to_dicts
 
@@ -42,6 +43,36 @@ def _check_num_speakers(n: Optional[int]) -> Optional[int]:
     return n
 
 
+def _check_analyzer_ids(ids: Optional[list[str]]) -> Optional[str]:
+    """校验要跑的分析器，返回存进数据库的 JSON；None 表示用默认启用的那些。"""
+    if ids is None:
+        return None
+    known = {a.id for a in analyzers.load_analyzers()}
+    unknown = [i for i in ids if i not in known]
+    if unknown:
+        raise HTTPException(400, f"没有这些分析器：{', '.join(unknown)}")
+    return json.dumps(list(dict.fromkeys(ids)))
+
+
+def _get_analyzer(analyzer_id: str) -> Analyzer:
+    for a in analyzers.effective_analyzers():
+        if a.id == analyzer_id:
+            return a
+    raise HTTPException(404, "分析器不存在")
+
+
+def _llm_errors(fn, *args):
+    """大模型相关接口统一的错误处理：参数问题 400，没配置 400，接口失败 502。"""
+    try:
+        return fn(*args)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except llm.LLMNotConfigured as e:
+        raise HTTPException(400, str(e)) from e
+    except llm.LLMError as e:
+        raise HTTPException(502, str(e)) from e
+
+
 @app.get("/api/health")
 def health():
     return {
@@ -53,9 +84,90 @@ def health():
     }
 
 
+# ---------- 分析器 ----------
+
 @app.get("/api/analyzers")
 def list_analyzers():
-    return [a.public() for a in load_analyzers()]
+    return [a.public() for a in analyzers.effective_analyzers()]
+
+
+class RuleDraft(BaseModel):
+    rule: str
+
+
+@app.post("/api/analyzers/draft")
+def draft_analyzer(body: RuleDraft):
+    """把一句话的规则描述交给大模型，生成分析器草稿（不保存）。"""
+    return _llm_errors(rules.compile_rule, body.rule)
+
+
+class AnalyzerBody(BaseModel):
+    name: str = Field(min_length=1, max_length=20)
+    kind: str
+    description: str = Field("", max_length=200)
+    prompt: str = Field(min_length=1, max_length=MAX_PROMPT_CHARS)
+    rule: str = Field("", max_length=rules.MAX_RULE_CHARS)
+
+    def to_analyzer(self, analyzer_id: str, version: int = 1) -> Analyzer:
+        if self.kind not in KINDS:
+            raise HTTPException(400, f"kind 只能是 {', '.join(KINDS)} 之一")
+        return Analyzer(id=analyzer_id, name=self.name.strip(), kind=self.kind, prompt=self.prompt.strip(),
+                        description=self.description.strip(), version=version, rule=self.rule.strip())
+
+
+class PreviewBody(AnalyzerBody):
+    recording_id: str
+
+
+@app.post("/api/analyzers/preview")
+def preview_analyzer(body: PreviewBody):
+    """在一段已有录音上试跑还没保存的分析器，结果不入库。"""
+    _get_recording(body.recording_id)
+    return {"items": _llm_errors(pipeline.preview, body.recording_id, body.to_analyzer("preview"))}
+
+
+@app.post("/api/analyzers")
+def create_analyzer(body: AnalyzerBody):
+    a = body.to_analyzer(f"custom_{uuid.uuid4().hex[:8]}")
+    analyzers.save_custom(a)
+    return _get_analyzer(a.id).detail()
+
+
+@app.get("/api/analyzers/{analyzer_id}")
+def get_analyzer(analyzer_id: str):
+    return _get_analyzer(analyzer_id).detail()
+
+
+def _get_custom(analyzer_id: str) -> Analyzer:
+    a = _get_analyzer(analyzer_id)
+    if not a.custom:
+        raise HTTPException(403, "内置分析器不能在界面上修改或删除，可以停用")
+    return a
+
+
+@app.put("/api/analyzers/{analyzer_id}")
+def update_analyzer(analyzer_id: str, body: AnalyzerBody):
+    old = _get_custom(analyzer_id)
+    analyzers.save_custom(body.to_analyzer(analyzer_id, old.version + 1))
+    return _get_analyzer(analyzer_id).detail()
+
+
+@app.delete("/api/analyzers/{analyzer_id}")
+def delete_analyzer(analyzer_id: str):
+    analyzers.delete_custom(_get_custom(analyzer_id))
+    return {"ok": True}
+
+
+class AnalyzerPatch(BaseModel):
+    enabled: bool
+
+
+@app.patch("/api/analyzers/{analyzer_id}")
+def toggle_analyzer(analyzer_id: str, body: AnalyzerPatch):
+    """设置默认是否启用。新录音没有单独勾选时，只跑启用的分析器。"""
+    _get_analyzer(analyzer_id)
+    analyzers.set_enabled(analyzer_id, body.enabled)
+    return _get_analyzer(analyzer_id).public()
 
 
 # ---------- 录音 ----------
@@ -66,8 +178,13 @@ async def upload_recording(
     file: UploadFile = File(...),
     title: Optional[str] = Form(None),
     num_speakers: Optional[int] = Form(None),
+    analyzer_ids: Optional[str] = Form(None, alias="analyzers"),  # JSON 数组，例如 ["diary", "todo"]
 ):
     num_speakers = _check_num_speakers(num_speakers)
+    try:
+        selected = _check_analyzer_ids(json.loads(analyzer_ids) if analyzer_ids else None)
+    except (json.JSONDecodeError, TypeError) as e:
+        raise HTTPException(400, "analyzers 需要是分析器 id 组成的 JSON 数组") from e
     rec_id = uuid.uuid4().hex[:12]
     suffix = Path(file.filename or "").suffix.lower() or ".webm"
     path = settings.audio_dir / f"{rec_id}{suffix}"
@@ -77,8 +194,9 @@ async def upload_recording(
 
     with connect() as conn:
         conn.execute(
-            "INSERT INTO recordings (id, title, filename, audio_path, duration_ms, num_speakers) VALUES (?, ?, ?, ?, ?, ?)",
-            (rec_id, title, file.filename, str(path), audio.probe_duration_ms(path), num_speakers),
+            """INSERT INTO recordings (id, title, filename, audio_path, duration_ms, num_speakers, analyzers)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (rec_id, title, file.filename, str(path), audio.probe_duration_ms(path), num_speakers, selected),
         )
     background.add_task(pipeline.process, rec_id, path)
     return _public(_get_recording(rec_id))
@@ -132,9 +250,19 @@ def delete_recording(rec_id: str):
     return {"ok": True}
 
 
+class AnalyzeOptions(BaseModel):
+    analyzers: Optional[list[str]] = None  # None = 沿用这段录音上次的选择
+
+
 @app.post("/api/recordings/{rec_id}/analyze")
-def reanalyze(rec_id: str, background: BackgroundTasks):
-    _get_recording(rec_id)
+def reanalyze(rec_id: str, background: BackgroundTasks, body: Optional[AnalyzeOptions] = None):
+    """重新分析。只替换这次选中的分析器的结果，没选上的分析器结果保留。"""
+    rec = _get_recording(rec_id)
+    if rec["status"] not in ("done", "error"):
+        raise HTTPException(409, "这段录音正在处理中")
+    if body is not None and body.analyzers is not None:
+        with connect() as conn:
+            conn.execute("UPDATE recordings SET analyzers = ? WHERE id = ?", (_check_analyzer_ids(body.analyzers), rec_id))
     background.add_task(pipeline.analyze, rec_id)
     return {"ok": True}
 

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from . import audio, llm
-from .analyzers import COMMON_SPEC, OUTPUT_SPECS, Analyzer, load_analyzers
+from .analyzers import COMMON_SPEC, OUTPUT_SPECS, Analyzer, effective_analyzers
 from .asr import get_engine
 from .config import settings
 from .db import connect
@@ -89,56 +89,95 @@ def call_analyzer(analyzer: Analyzer, transcript: str) -> dict[str, Any]:
     return llm.chat_json(SYSTEM_PROMPT, user)
 
 
+def normalize(kind: str, data: dict[str, Any], valid: set[int]) -> list[dict[str, Any]]:
+    """把模型输出整理成要入库的条目：丢掉无效项和不存在的片段编号，修正等级和置信度。"""
+    if kind == "summary":
+        highlights = [h for h in data.get("highlights") or [] if isinstance(h, dict)]
+        evidence = sorted({n for h in highlights for n in _clean_evidence(h.get("evidence", []), valid)})
+        detail = data.get("summary", "")
+        if highlights:
+            detail += "\n" + "\n".join(f"· {h.get('text', '')}" for h in highlights)
+        return [{"title": data.get("title", ""), "detail": detail.strip(), "evidence": evidence}]
+
+    if kind == "todo":
+        return [
+            {"title": t["title"], "detail": t.get("detail"), "owner": t.get("owner"), "due": t.get("due"),
+             "confidence": _confidence(t.get("confidence")), "evidence": _clean_evidence(t.get("evidence", []), valid)}
+            for t in data.get("todos") or [] if isinstance(t, dict) and t.get("title")
+        ]
+
+    return [
+        {"level": i.get("level") if i.get("level") in ("info", "notice", "warning") else "info",
+         "title": i["title"], "detail": i.get("detail"),
+         "confidence": _confidence(i.get("confidence")), "evidence": _clean_evidence(i.get("evidence", []), valid)}
+        for i in data.get("insights") or [] if isinstance(i, dict) and i.get("title")
+    ]
+
+
 def run_analyzer(rec_id: str, analyzer: Analyzer, transcript: str, valid: set[int]) -> None:
-    data = call_analyzer(analyzer, transcript)
+    items = normalize(analyzer.kind, call_analyzer(analyzer, transcript), valid)
 
     with connect() as conn:
         if analyzer.kind == "summary":
-            highlights = data.get("highlights") or []
-            evidence = sorted({n for h in highlights if isinstance(h, dict) for n in _clean_evidence(h.get("evidence", []), valid)})
-            detail = data.get("summary", "")
-            if highlights:
-                detail += "\n" + "\n".join(f"· {h.get('text', '')}" for h in highlights if isinstance(h, dict))
+            [s] = items
             conn.execute(
                 "INSERT INTO insights (recording_id, analyzer_id, kind, title, detail, evidence) VALUES (?, ?, 'summary', ?, ?, ?)",
-                (rec_id, analyzer.id, data.get("title", ""), detail.strip(), json.dumps(evidence)),
+                (rec_id, analyzer.id, s["title"], s["detail"], json.dumps(s["evidence"])),
             )
-            if data.get("title"):
-                conn.execute("UPDATE recordings SET title = ? WHERE id = ? AND (title IS NULL OR title = '')", (data["title"], rec_id))
+            if s["title"]:
+                conn.execute("UPDATE recordings SET title = ? WHERE id = ? AND (title IS NULL OR title = '')", (s["title"], rec_id))
 
         elif analyzer.kind == "todo":
             # 重新分析时，已完成的待办被保留了，不要再生成一遍
             done_titles = {r[0] for r in conn.execute(
                 "SELECT title FROM todos WHERE recording_id = ? AND done = 1", (rec_id,))}
-            for t in data.get("todos") or []:
-                if not isinstance(t, dict) or not t.get("title") or t["title"] in done_titles:
+            for t in items:
+                if t["title"] in done_titles:
                     continue
                 conn.execute(
                     """INSERT INTO todos (recording_id, analyzer_id, title, detail, owner, due, confidence, evidence)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (rec_id, analyzer.id, t["title"], t.get("detail"), t.get("owner"), t.get("due"),
-                     _confidence(t.get("confidence")), json.dumps(_clean_evidence(t.get("evidence", []), valid))),
+                    (rec_id, analyzer.id, t["title"], t["detail"], t["owner"], t["due"], t["confidence"], json.dumps(t["evidence"])),
                 )
 
         else:  # insight
-            for i in data.get("insights") or []:
-                if not isinstance(i, dict) or not i.get("title"):
-                    continue
-                level = i.get("level") if i.get("level") in ("info", "notice", "warning") else "info"
+            for i in items:
                 conn.execute(
                     """INSERT INTO insights (recording_id, analyzer_id, kind, level, title, detail, confidence, evidence)
                        VALUES (?, ?, 'insight', ?, ?, ?, ?, ?)""",
-                    (rec_id, analyzer.id, level, i["title"], i.get("detail"),
-                     _confidence(i.get("confidence")), json.dumps(_clean_evidence(i.get("evidence", []), valid))),
+                    (rec_id, analyzer.id, i["level"], i["title"], i["detail"], i["confidence"], json.dumps(i["evidence"])),
                 )
 
 
-def analyze(rec_id: str) -> None:
-    """（重新）运行所有启用的分析器。已勾选完成的待办会保留。"""
-    _set_status(rec_id, "analyzing")
+def selected_analyzers(rec_id: str) -> list[Analyzer]:
+    """这段录音要跑的分析器：用户勾选过就按勾选的来，否则用默认启用的。"""
     with connect() as conn:
-        conn.execute("DELETE FROM insights WHERE recording_id = ?", (rec_id,))
-        conn.execute("DELETE FROM todos WHERE recording_id = ? AND done = 0", (rec_id,))
+        row = conn.execute("SELECT analyzers FROM recordings WHERE id = ?", (rec_id,)).fetchone()
+    analyzers = effective_analyzers()
+    if row is None or row[0] is None:
+        return [a for a in analyzers if a.enabled]
+    by_id = {a.id: a for a in analyzers}
+    return [by_id[i] for i in json.loads(row[0]) if i in by_id]  # 已被删除的分析器直接跳过
+
+
+def preview(rec_id: str, analyzer: Analyzer) -> list[dict[str, Any]]:
+    """试跑：在一段录音上运行分析器，结果直接返回，不入库。"""
+    transcript, valid = build_transcript(rec_id)
+    if not transcript:
+        raise ValueError("这段录音没有转写内容")
+    return normalize(analyzer.kind, call_analyzer(analyzer, transcript), valid)
+
+
+def analyze(rec_id: str) -> None:
+    """（重新）运行选中的分析器。只替换这些分析器的旧结果；没选上的分析器结果和已完成的待办都保留。"""
+    _set_status(rec_id, "analyzing")
+    analyzers = selected_analyzers(rec_id)
+    ids = [a.id for a in analyzers]
+    if ids:
+        marks = ",".join("?" * len(ids))
+        with connect() as conn:
+            conn.execute(f"DELETE FROM insights WHERE recording_id = ? AND analyzer_id IN ({marks})", (rec_id, *ids))
+            conn.execute(f"DELETE FROM todos WHERE recording_id = ? AND done = 0 AND analyzer_id IN ({marks})", (rec_id, *ids))
 
     transcript, valid = build_transcript(rec_id)
     if not transcript:
@@ -146,7 +185,7 @@ def analyze(rec_id: str) -> None:
         return
 
     errors = []
-    for analyzer in (a for a in load_analyzers() if a.enabled):
+    for analyzer in analyzers:
         t0 = time.time()
         try:
             run_analyzer(rec_id, analyzer, transcript, valid)
