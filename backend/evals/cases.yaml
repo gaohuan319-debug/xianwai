@@ -1,0 +1,178 @@
+# 分析器评测用例。每个用例是一段已转写的对话，加上对各分析器的期望。
+#
+# 期望写法（键是分析器 id，只检查「会展示给用户」的结果，即 confidence >= 0.5）：
+#   todo:
+#     count: [最少, 最多]
+#     include: [关键词, ...]   # 每个关键词都要出现在某条待办的标题或说明里
+#     exclude: [关键词, ...]   # 这些关键词不能出现在任何待办里
+#   <insight 类分析器>:
+#     min_level: info | notice | warning   # 至少要有这个等级
+#     max_level: none | info | notice | warning   # 不能超过这个等级（none = 不应输出）
+#     count: [最少, 最多]                          # 展示出来的洞察条数
+#
+# 欢迎补充真实场景（请先脱敏）。误报用例和漏报用例同样重要。
+
+- id: fraud_mom
+  desc: 妈妈转述冒充银行客服的诈骗电话，对话里有两件待办
+  speakers: {S1: 我, S2: 妈妈}
+  lines:
+    - [S1, 喂，妈，我刚下班。]
+    - [S2, 哎，今天下午有个自称银行客服的人给我打电话。]
+    - [S2, 说我的账户涉嫌洗钱，要我把钱转到一个安全账户配合调查。]
+    - [S1, 你没转吧？]
+    - [S2, 还没有，他说这事要保密，不能跟家里人说，让我今天晚上之前办好。]
+    - [S1, 这是诈骗，千万别转，也别告诉他验证码。]
+    - [S1, 我明天上午陪你去一趟银行柜台问清楚。]
+    - [S2, 好，那你周六记得回来吃饭，顺便帮我把打印机修一下。]
+    - [S1, 行，我周六中午到。]
+  expect:
+    anti_fraud: {min_level: warning}
+    todo: {count: [2, 3], include: [银行, 打印机]}
+
+- id: parcel_refund
+  desc: 正在进行中的快递理赔诈骗：下载 App、屏幕共享
+  speakers: {S1: 我}
+  lines:
+    - [S2, 您好，我是某某快递的理赔专员，您上周寄的包裹在运输中丢失了。]
+    - [S1, 啊？我好像没寄过东西啊。]
+    - [S2, 系统显示是您的手机号，我们会按三倍赔偿，需要您配合办理一下。]
+    - [S2, 您先下载一个叫「速赔」的 App，打开里面的屏幕共享，我一步步教您操作。]
+    - [S1, 一定要下载吗？]
+    - [S2, 对的，这是我们公司的理赔通道，今天不处理的话赔偿就作废了。]
+  expect:
+    anti_fraud: {min_level: warning}
+    todo: {count: [0, 0], exclude: [下载, 屏幕共享, 理赔]}
+
+- id: real_bank_notice
+  desc: 正常的银行事务，不应误报诈骗
+  speakers: {S1: 我, S2: 妈妈}
+  lines:
+    - [S2, 我收到银行短信，说我那张信用卡要扣年费了。]
+    - [S1, 那张卡你还用吗？]
+    - [S2, 早就不用了，我明天自己去柜台把它销掉。]
+    - [S1, 行，记得带身份证。顺便问问能不能免掉这次年费。]
+    - [S2, 好，我记下了。]
+  expect:
+    anti_fraud: {max_level: info}
+    todo: {count: [1, 1], include: [销]}
+
+- id: boss_pressure
+  desc: 上级施压、比较打压，含一个明确的截止任务
+  speakers: {S1: 我, S2: 领导}
+  lines:
+    - [S2, 那个方案怎么还没给我？]
+    - [S1, 数据还差一部分，我在等财务那边。]
+    - [S2, 别找借口，小王那边同样的事情两天就搞定了。]
+    - [S2, 周五下班前必须给我，周末加个班也不是什么大事，你自己看着办。]
+    - [S1, 好的，我尽量。]
+  expect:
+    communication: {min_level: notice, max_level: notice}
+    anti_fraud: {max_level: none}
+    todo: {count: [1, 2], include: [方案]}
+
+- id: friends_lunch
+  desc: 朋友间普通闲聊，什么都不应该标出来
+  speakers: {S1: 我, S2: 小林}
+  lines:
+    - [S2, 中午吃的什么？]
+    - [S1, 楼下那家牛肉面，还行，就是有点咸。]
+    - [S2, 那家我也去过，汤不错。最近天气好热啊。]
+    - [S1, 是啊，我都不想出门了。]
+  expect:
+    communication: {max_level: none}
+    anti_fraud: {max_level: none}
+    todo: {count: [0, 0]}
+
+- id: friends_teasing
+  desc: 朋友之间开玩笑互损，不应被当成贬低或恶意
+  speakers: {S1: 我, S2: 阿杰}
+  lines:
+    - [S2, 哈哈哈你又输了，你这技术也太菜了吧。]
+    - [S1, 闭嘴，刚才那把是网卡了。]
+    - [S2, 每次都网卡，笑死我了。]
+    - [S1, 再来一把，这次肯定赢你。]
+  expect:
+    communication: {max_level: info}
+    todo: {count: [0, 0]}
+
+- id: vague_promises
+  desc: 客套话和含糊约定，不应生成需要追踪的待办
+  speakers: {S1: 我, S2: 老同学}
+  lines:
+    - [S2, 好久不见啊，有空一起吃个饭。]
+    - [S1, 好啊好啊，改天约。]
+    - [S2, 那个项目要是有机会的话，回头再说吧。]
+    - [S1, 行，有需要随时联系。]
+  expect:
+    todo: {count: [0, 0]}
+    anti_fraud: {max_level: none}
+
+- id: partner_avoidance
+  desc: 伴侣之间回避问题、转移话题，含一个明确的家务约定
+  speakers: {S1: 我, S2: 对象}
+  lines:
+    - [S1, 上次说的去见我爸妈的事，你想好了吗？]
+    - [S2, 这个……最近工作挺忙的，再看吧。]
+    - [S1, 都说了三次再看了。]
+    - [S2, 对了，晚上吃什么？要不叫外卖吧。]
+    - [S1, 我认真问你呢。]
+    - [S2, 好好好，那我今晚洗碗总行了吧。]
+  expect:
+    communication: {min_level: notice, max_level: notice}
+    todo: {count: [1, 1], include: [洗碗]}
+
+- id: threat
+  desc: 明确的威胁和人格羞辱，应该给出 warning
+  speakers: {S1: 我, S2: 对方}
+  lines:
+    - [S2, 你要是敢跟我分手，我就把你那些照片全发到你公司群里。]
+    - [S1, 你这是在威胁我？]
+    - [S2, 你这种废物离了我谁要你，你自己掂量掂量。]
+  expect:
+    communication: {min_level: warning}
+    todo: {count: [0, 0]}
+
+- id: parenting_lecture
+  desc: 幼儿园老师给家长做讲座，观点鲜明但属于正常的教育分享，不应被当成沟通问题解读
+  speakers: {S1: 老师}
+  lines:
+    - [S1, 今天占用大家周末的时间，主要想和各位家长聊聊孩子专注力的问题。]
+    - [S1, 我带过一个孩子，上了小学以后被贴了很多标签，老师说他坐不住、跟老师对着干。]
+    - [S1, 其实很多问题的根源，都在幼儿园阶段家长的教育方式上。]
+    - [S1, 有的家长说我小时候也这样，现在不也挺好。如果你觉得不是问题，那我们也没有办法。]
+    - [S1, 研究显示，每天看屏幕超过两个小时的孩子，注意力问题会更明显。]
+    - [S1, 所以我建议大家严格控制孩子用手机，能不给就不给。]
+    - [S1, 孩子遇到困难的时候，先让他自己说说怎么办，家长不要急着包办。]
+    - [S1, 希望我们家园能达成共识，一起帮孩子把习惯养好。]
+  expect:
+    communication: {max_level: info, count: [0, 1]}
+    anti_fraud: {max_level: none}
+    todo: {count: [0, 0]}
+
+- id: team_meeting
+  desc: 部门例会，领导单向布置工作，语气正常，不应解读出弦外之音
+  speakers: {S1: 领导, S2: 我}
+  lines:
+    - [S1, 简单同步一下这周的安排。]
+    - [S1, 第一，季度报告周四之前汇总给我，各组负责人注意一下时间。]
+    - [S1, 第二，下周一客户来访，行政那边会提前订好会议室。]
+    - [S1, 第三，最近报销流程有调整，具体看邮件，有问题找财务。]
+    - [S1, 大家还有什么问题吗？没有的话就散会。]
+    - [S2, 好的。]
+  expect:
+    communication: {max_level: none}
+    anti_fraud: {max_level: none}
+
+- id: health_sales_seminar
+  desc: 面向老人的保健品「会销」讲座：单向场景，但有典型的高压推销话术，必须照样标出
+  speakers: {S1: 讲师}
+  lines:
+    - [S1, 叔叔阿姨们，我是从北京请来的养生专家，今天给大家讲讲怎么不吃药就把血压降下来。]
+    - [S1, 医院开的降压药都是有副作用的，吃多了伤肝伤肾，我们这个纳米活性肽是纯天然的。]
+    - [S1, 坚持吃三个疗程，降压药就可以停了，很多老人都已经停药了。]
+    - [S1, 今天是厂家直销价，一套原价九千八，现在只要两千九百八。]
+    - [S1, 名额只有前二十位，错过今天就恢复原价了，不用跟儿女商量，他们不懂这个。]
+    - [S1, 没带够钱的可以先交定金，现场就能扫码。]
+  expect:
+    communication: {min_level: notice}
+    anti_fraud: {min_level: notice}

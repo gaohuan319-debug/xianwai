@@ -1,0 +1,10 @@
+{
+  "name": "弦外",
+  "short_name": "弦外",
+  "description": "开源、本地优先的对话记录与分析：日记、待办、弦外之音。",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f6f5f1",
+  "theme_color": "#1f2a44",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}
