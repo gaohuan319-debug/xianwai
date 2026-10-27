@@ -102,3 +102,33 @@ def test_retranscribe_with_speaker_count(client):
     rec = client.get(f"/api/recordings/{rec_id}").json()
     assert rec["status"] == "done" and rec["num_speakers"] == 1
     assert all(s["name"] is None for s in rec["speakers"])  # 旧标注已清空
+
+
+def test_chat_json_retries_transient_errors(monkeypatch):
+    import httpx
+
+    import app.llm as llm
+
+    monkeypatch.setattr(llm.settings, "llm_api_key", "test")
+    monkeypatch.setattr(llm, "RETRY_BACKOFF", 0)
+    calls = []
+
+    def fake_post(url, **kw):
+        calls.append(url)
+        req = httpx.Request("POST", url)
+        if len(calls) == 1:
+            raise httpx.ConnectError("Temporary failure in name resolution", request=req)
+        if len(calls) == 2:
+            return httpx.Response(503, request=req, text="busy")
+        return httpx.Response(200, request=req, json={"choices": [{"message": {"content": '{"ok": 1}'}}]})
+
+    monkeypatch.setattr(llm.httpx, "post", fake_post)
+    assert llm.chat_json("s", "u") == {"ok": 1}
+    assert len(calls) == 3
+
+    # 401 这类客户端错误不重试
+    calls.clear()
+    monkeypatch.setattr(llm.httpx, "post", lambda url, **kw: (calls.append(url), httpx.Response(401, request=httpx.Request("POST", url), text="bad key"))[1])
+    with pytest.raises(llm.LLMError, match="401"):
+        llm.chat_json("s", "u")
+    assert len(calls) == 1

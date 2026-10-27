@@ -44,12 +44,23 @@ class FunASREngine:
                 names = {"model": "paraformer-zh", "vad_model": "fsmn-vad", "punc_model": "ct-punc", "spk_model": "cam++"}
                 paths = {k: _local_model_dir(v) for k, v in names.items()}
                 offline = all(paths.values())
-                self._model = AutoModel(
-                    **{k: paths[k] or v for k, v in names.items()},
-                    # 已全部下载时跳过联网检查更新，否则每次启动都要逐个访问 ModelScope，网络慢时要好几分钟
-                    check_latest=not offline,
-                    disable_update=True,
-                )
+                try:
+                    self._model = AutoModel(
+                        **{k: paths[k] or v for k, v in names.items()},
+                        # 已全部下载时跳过联网检查更新，否则每次启动都要逐个访问 ModelScope，网络慢时要好几分钟
+                        check_latest=not offline,
+                        disable_update=True,
+                    )
+                except Exception as e:
+                    if offline:
+                        raise
+                    # 下载失败时 FunASR 只会报「model is not registered」，很难看出是网络问题
+                    missing = [names[k] for k, p in paths.items() if not p]
+                    raise RuntimeError(
+                        f"语音模型 {', '.join(missing)} 尚未下载，且从 ModelScope 下载失败。"
+                        "请检查能否访问 modelscope.cn（Docker 部署请确认容器能联网，见 README「常见问题」）。"
+                        f"原始错误：{e}"
+                    ) from e
                 log.info("模型加载完成（%s），用时 %.0fs", "离线" if offline else "联网", time.time() - t0)
         return self._model
 

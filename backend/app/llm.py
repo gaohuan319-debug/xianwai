@@ -3,11 +3,17 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from typing import Any
 
 import httpx
 
 from .config import settings
+
+
+# 网络抖动、限流、服务端错误时的重试次数和起始等待秒数（每次翻倍）
+RETRIES = 2
+RETRY_BACKOFF = 2.0
 
 
 class LLMError(RuntimeError):
@@ -30,19 +36,30 @@ def chat_json(system: str, user: str) -> dict[str, Any]:
     if settings.llm_json_mode:
         body["response_format"] = {"type": "json_object"}
 
-    try:
-        resp = httpx.post(
-            f"{settings.llm_base_url}/chat/completions",
-            headers={"Authorization": f"Bearer {settings.llm_api_key}"},
-            json=body,
-            timeout=settings.llm_timeout,
-        )
-        resp.raise_for_status()
-        content = resp.json()["choices"][0]["message"]["content"]
-    except httpx.HTTPStatusError as e:
-        raise LLMError(f"大模型接口返回 {e.response.status_code}: {e.response.text[:300]}") from e
-    except (httpx.HTTPError, KeyError, IndexError) as e:
-        raise LLMError(f"调用大模型失败: {e}") from e
+    for attempt in range(RETRIES + 1):
+        try:
+            resp = httpx.post(
+                f"{settings.llm_base_url}/chat/completions",
+                headers={"Authorization": f"Bearer {settings.llm_api_key}"},
+                json=body,
+                timeout=settings.llm_timeout,
+            )
+            resp.raise_for_status()
+            content = resp.json()["choices"][0]["message"]["content"]
+            break
+        except httpx.HTTPStatusError as e:
+            code = e.response.status_code
+            if (code == 429 or code >= 500) and attempt < RETRIES:
+                time.sleep(RETRY_BACKOFF * 2**attempt)
+                continue
+            raise LLMError(f"大模型接口返回 {code}: {e.response.text[:300]}") from e
+        except httpx.TransportError as e:  # 连接失败、DNS、超时：多半是暂时的
+            if attempt < RETRIES:
+                time.sleep(RETRY_BACKOFF * 2**attempt)
+                continue
+            raise LLMError(f"调用大模型失败: {e}") from e
+        except (httpx.HTTPError, KeyError, IndexError) as e:
+            raise LLMError(f"调用大模型失败: {e}") from e
     return parse_json(content)
 
 

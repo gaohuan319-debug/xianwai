@@ -48,7 +48,9 @@ cp .env.example .env      # 填入 XW_LLM_API_KEY
 docker compose up -d
 ```
 
-打开 <http://localhost:8000>。首次转写会自动从 ModelScope 下载语音模型（约 1GB），之后完全离线。
+打开 <http://localhost:8000>。首次转写会自动从 ModelScope 下载语音模型（约 2GB，保存在 `models/` 目录），之后完全离线。
+
+> 💻 **资源需求**：镜像约 3GB，运行时内存约 3GB。请给 Docker 分配至少 4GB 内存（Docker Desktop 在设置里调整，Colima 用 `colima start --memory 4`）。
 
 国内构建慢的话，可以换用 pip 镜像：
 
@@ -74,6 +76,32 @@ uvicorn app.main:app --reload
 ```
 
 > 📱 **在手机上录音**：浏览器只允许在 HTTPS 或 localhost 下使用麦克风。局域网访问时可以先用「导入音频」，或者用 Caddy、Tailscale 等工具配置 HTTPS。
+
+### 常见问题
+
+**转写失败，提示「语音模型尚未下载，且从 ModelScope 下载失败」**
+
+容器访问不了外网。先确认一下：
+
+```bash
+docker compose exec xianwai python -c "import socket; print(socket.gethostbyname('www.modelscope.cn'))"
+```
+
+如果报 `name resolution` 错误，说明是容器的 DNS 有问题，常见于 Colima，以及开了代理软件的电脑。可以在项目根目录新建 `docker-compose.override.yml`，给容器指定 DNS，然后执行 `docker compose up -d`：
+
+```yaml
+services:
+  xianwai:
+    dns: [223.5.5.5, 119.29.29.29]
+```
+
+**第一次转写特别慢**
+
+第一次要下载约 2GB 的模型，之后每次启动加载模型只需要十几秒。转写本身大约需要录音时长的三分之一，比如 37 分钟的录音在 4 核 CPU 上需要 12 分钟左右。
+
+**讲座、单人录音被分成了好几个说话人**
+
+上传时把「说话人数」选为 1；已经上传的录音可以在详情页选好人数后点「重新转写」。
 
 ## 配置大模型
 

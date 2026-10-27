@@ -9,6 +9,9 @@ services:
     ports:
       - "8000:8000"
     env_file: .env
+    # 让容器能用 host.docker.internal 访问宿主机上的 Ollama（Linux 默认不提供这个地址）
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./data:/data        # 数据库、音频、自定义分析器
       - ./models:/models    # FunASR 模型缓存，避免重复下载
